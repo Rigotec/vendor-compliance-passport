@@ -206,8 +206,29 @@ function AddDocumentForm({ onAdd, onCancel }) {
   const [customType, setCustomType] = useState("");
   const [issueDate, setIssueDate] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
+  const [error, setError] = useState("");
 
   const finalType = type === "__custom" ? customType : type;
+
+  function validate() {
+    if (!finalType.trim()) return "Choose or enter a document type.";
+    if (!issueDate) return "Issue date is required.";
+    if (!expiryDate) return "Expiry date is required.";
+    if (new Date(expiryDate) <= new Date(issueDate)) {
+      return "Expiry date must be after the issue date.";
+    }
+    return "";
+  }
+
+  function handleSubmit() {
+    const err = validate();
+    if (err) {
+      setError(err);
+      return;
+    }
+    setError("");
+    onAdd({ id: uid(), type: finalType.trim(), issueDate, expiryDate });
+  }
 
   return (
     <div
@@ -261,14 +282,17 @@ function AddDocumentForm({ onAdd, onCancel }) {
           </div>
         </div>
       </div>
+
+      {error && (
+        <p className="mt-3" style={{ fontFamily: DATA_FONT, fontSize: 12, color: STAMP_RED }}>
+          {error}
+        </p>
+      )}
+
       <div className="flex gap-2 mt-4">
         <button
-          onClick={() => {
-            if (!finalType || !issueDate || !expiryDate) return;
-            onAdd({ id: uid(), type: finalType, issueDate, expiryDate });
-          }}
-          disabled={!finalType || !issueDate || !expiryDate}
-          className="px-4 py-2 rounded font-semibold disabled:opacity-40"
+          onClick={handleSubmit}
+          className="px-4 py-2 rounded font-semibold"
           style={{ backgroundColor: INK, color: PAPER, fontFamily: DATA_FONT, fontSize: 12, letterSpacing: 1 }}
         >
           STAMP DOCUMENT
@@ -286,8 +310,48 @@ function AddDocumentForm({ onAdd, onCancel }) {
 }
 
 // ---- Passport Detail View ------------------------------------------------
+// ---- Confirm Dialog -----------------------------------------------------
+function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-5"
+      style={{ backgroundColor: "rgba(10,25,48,0.75)" }}
+    >
+      <div
+        className="w-full max-w-sm rounded-xl p-6"
+        style={{ backgroundColor: PAPER, border: `1px solid ${STAMP_RED}` }}
+      >
+        <h3 style={{ fontFamily: DISPLAY_FONT, fontSize: 19, color: INK_TEXT }} className="mb-2">
+          {title}
+        </h3>
+        <p style={{ fontFamily: DATA_FONT, fontSize: 12, color: "#6B6250", lineHeight: 1.6 }} className="mb-6">
+          {message}
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2 rounded font-semibold"
+            style={{ backgroundColor: STAMP_RED, color: PAPER, fontFamily: DATA_FONT, fontSize: 12, letterSpacing: 1 }}
+          >
+            {confirmLabel || "DELETE"}
+          </button>
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2 rounded font-semibold"
+            style={{ border: `1px solid ${INK}`, color: INK, fontFamily: DATA_FONT, fontSize: 12, letterSpacing: 1 }}
+          >
+            CANCEL
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDelete }) {
   const [adding, setAdding] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDocId, setConfirmDocId] = useState(null);
   const status = vendorStatus(vendor);
   const meta = STATUS_META[status];
 
@@ -363,12 +427,25 @@ function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDel
           </div>
 
           <button
-            onClick={() => onDelete(vendor.id)}
+            onClick={() => setConfirmDelete(true)}
             className="absolute bottom-6 left-8 flex items-center gap-1 text-xs"
             style={{ color: STAMP_RED, fontFamily: DATA_FONT }}
           >
             <Trash2 size={13} /> REMOVE VENDOR PASSPORT
           </button>
+
+          {confirmDelete && (
+            <ConfirmDialog
+              title="Remove this vendor passport?"
+              message={`This permanently deletes "${vendor.name}" and all ${vendor.documents.length} attached compliance document${vendor.documents.length === 1 ? "" : "s"}. This cannot be undone.`}
+              confirmLabel="DELETE VENDOR"
+              onConfirm={() => {
+                setConfirmDelete(false);
+                onDelete(vendor.id);
+              }}
+              onCancel={() => setConfirmDelete(false)}
+            />
+          )}
         </div>
 
         {/* Right page: stamps */}
@@ -410,10 +487,23 @@ function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDel
                 key={doc.id}
                 doc={doc}
                 angle={angles[i] || 0}
-                onRemove={() => onRemoveDocument(doc.id)}
+                onRemove={() => setConfirmDocId(doc.id)}
               />
             ))}
           </div>
+
+          {confirmDocId && (
+            <ConfirmDialog
+              title="Remove this document?"
+              message={`This deletes the "${vendor.documents.find((d) => d.id === confirmDocId)?.type}" record from ${vendor.name}'s passport. This cannot be undone.`}
+              confirmLabel="REMOVE DOCUMENT"
+              onConfirm={() => {
+                onRemoveDocument(confirmDocId);
+                setConfirmDocId(null);
+              }}
+              onCancel={() => setConfirmDocId(null)}
+            />
+          )}
 
           {adding && (
             <AddDocumentForm
@@ -480,6 +570,30 @@ function RegisterVendorForm({ onCreate, onCancel }) {
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [country, setCountry] = useState(COUNTRIES[0].code);
   const [contact, setContact] = useState("");
+  const [error, setError] = useState("");
+
+  function validate() {
+    if (name.trim().length < 2) return "Vendor name must be at least 2 characters.";
+    if (contact.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.trim())) {
+      return "Enter a valid email address, or leave contact blank.";
+    }
+    return "";
+  }
+
+  function handleSubmit() {
+    const err = validate();
+    if (err) {
+      setError(err);
+      return;
+    }
+    setError("");
+    onCreate({
+      name: name.trim(),
+      category,
+      country,
+      contact: contact.trim(),
+    });
+  }
 
   return (
     <div
@@ -537,19 +651,17 @@ function RegisterVendorForm({ onCreate, onCancel }) {
           />
         </div>
       </div>
+
+      {error && (
+        <p className="mt-3" style={{ fontFamily: DATA_FONT, fontSize: 12, color: STAMP_RED }}>
+          {error}
+        </p>
+      )}
+
       <div className="flex gap-2 mt-5">
         <button
-          onClick={() => {
-            if (!name.trim()) return;
-            onCreate({
-              name: name.trim(),
-              category,
-              country,
-              contact: contact.trim(),
-            });
-          }}
-          disabled={!name.trim()}
-          className="px-5 py-2 rounded font-semibold disabled:opacity-40"
+          onClick={handleSubmit}
+          className="px-5 py-2 rounded font-semibold"
           style={{ backgroundColor: INK, color: PAPER, fontFamily: DATA_FONT, fontSize: 12, letterSpacing: 1 }}
         >
           ISSUE PASSPORT
