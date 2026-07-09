@@ -10,6 +10,9 @@ import {
   ChevronLeft,
   BadgeCheck,
   ArrowRight,
+  LogOut,
+  Lock,
+  Mail,
 } from "lucide-react";
 
 // ---- Design tokens -----------------------------------------------------
@@ -319,7 +322,7 @@ function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDel
           <div className="flex items-center gap-2 mb-6" style={{ color: GOLD }}>
             <ShieldCheck size={20} />
             <span style={{ fontFamily: DATA_FONT, fontSize: 11, letterSpacing: 2 }}>
-              VENDOR COMPLIANCE PASSPORT
+              COMPLISURE
             </span>
           </div>
 
@@ -563,8 +566,137 @@ function RegisterVendorForm({ onCreate, onCancel }) {
   );
 }
 
+// ---- Login Screen -----------------------------------------------------
+function LoginScreen({ onAuthed }) {
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    if (!email.trim() || !password) {
+      setError("Enter both email and password.");
+      return;
+    }
+    setLoading(true);
+    if (mode === "signin") {
+      const { data, error: err } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      setLoading(false);
+      if (err) {
+        setError(err.message);
+        return;
+      }
+      if (data?.session) onAuthed();
+    } else {
+      const { error: err } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+      });
+      setLoading(false);
+      if (err) {
+        setError(err.message);
+        return;
+      }
+      setNotice("Account created. Check your email to confirm, then sign in.");
+      setMode("signin");
+    }
+  }
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center p-5"
+      style={{ backgroundColor: INK_DARK }}
+    >
+      <div
+        className="w-full max-w-sm rounded-xl p-8"
+        style={{ backgroundColor: PAPER, border: `1px solid ${GOLD}` }}
+      >
+        <div className="flex items-center gap-2 mb-1" style={{ color: GOLD }}>
+          <ShieldCheck size={20} />
+          <span style={{ fontFamily: DATA_FONT, fontSize: 11, letterSpacing: 2 }}>
+            COMPLISURE
+          </span>
+        </div>
+        <h1 style={{ fontFamily: DISPLAY_FONT, fontSize: 24, color: INK_TEXT }} className="mb-6">
+          {mode === "signin" ? "Sign In" : "Create Your Account"}
+        </h1>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label style={{ fontFamily: DATA_FONT, fontSize: 11, color: "#6B6250" }}>EMAIL</label>
+            <div className="flex items-center gap-2 mt-1 px-3 py-2 rounded" style={{ border: `1px solid ${GOLD}`, backgroundColor: "#fff" }}>
+              <Mail size={14} color="#8A8272" />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full outline-none bg-transparent"
+                style={{ fontFamily: DATA_FONT, fontSize: 13 }}
+                placeholder="you@company.com"
+                autoComplete="email"
+              />
+            </div>
+          </div>
+          <div>
+            <label style={{ fontFamily: DATA_FONT, fontSize: 11, color: "#6B6250" }}>PASSWORD</label>
+            <div className="flex items-center gap-2 mt-1 px-3 py-2 rounded" style={{ border: `1px solid ${GOLD}`, backgroundColor: "#fff" }}>
+              <Lock size={14} color="#8A8272" />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full outline-none bg-transparent"
+                style={{ fontFamily: DATA_FONT, fontSize: 13 }}
+                placeholder="••••••••"
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              />
+            </div>
+          </div>
+
+          {error && (
+            <p style={{ fontFamily: DATA_FONT, fontSize: 12, color: STAMP_RED }}>{error}</p>
+          )}
+          {notice && (
+            <p style={{ fontFamily: DATA_FONT, fontSize: 12, color: STAMP_GREEN }}>{notice}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-2 rounded font-semibold disabled:opacity-50"
+            style={{ backgroundColor: INK, color: PAPER, fontFamily: DATA_FONT, fontSize: 12, letterSpacing: 1 }}
+          >
+            {loading ? "PLEASE WAIT…" : mode === "signin" ? "SIGN IN" : "CREATE ACCOUNT"}
+          </button>
+        </form>
+
+        <button
+          onClick={() => {
+            setMode(mode === "signin" ? "signup" : "signin");
+            setError("");
+            setNotice("");
+          }}
+          className="w-full text-center mt-5"
+          style={{ fontFamily: DATA_FONT, fontSize: 12, color: "#6B6250" }}
+        >
+          {mode === "signin" ? "Need an account? Register here" : "Already have an account? Sign in"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---- Main App -------------------------------------------------------------
 export default function VendorCompliancePassport() {
+  const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
   const [vendors, setVendors] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
@@ -604,8 +736,16 @@ export default function VendorCompliancePassport() {
   }
 
   useEffect(() => {
-    loadVendors();
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (session) loadVendors();
+  }, [session]);
 
   async function createVendor(vendor) {
     const { data, error } = await supabase
@@ -706,6 +846,20 @@ export default function VendorCompliancePassport() {
     return c;
   }, [vendors]);
 
+  if (session === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: INK_DARK }}>
+        <span style={{ color: GOLD_LIGHT, fontFamily: DATA_FONT, fontSize: 13, letterSpacing: 2 }}>
+          CHECKING CREDENTIALS…
+        </span>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginScreen onAuthed={() => {}} />;
+  }
+
   if (!loaded) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: INK_DARK }}>
@@ -720,11 +874,20 @@ export default function VendorCompliancePassport() {
     <div className="min-h-screen" style={{ backgroundColor: INK_DARK }}>
       <div className="max-w-6xl mx-auto px-5 py-8">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-1">
-          <ShieldCheck size={26} color={GOLD} />
-          <h1 style={{ fontFamily: DISPLAY_FONT, color: PAPER, fontSize: 30 }}>
-            Vendor Compliance Passport
-          </h1>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-3">
+            <ShieldCheck size={26} color={GOLD} />
+            <h1 style={{ fontFamily: DISPLAY_FONT, color: PAPER, fontSize: 30 }}>
+              CompliSure
+            </h1>
+          </div>
+          <button
+            onClick={() => supabase.auth.signOut()}
+            className="flex items-center gap-1 px-3 py-1.5 rounded"
+            style={{ border: "1px solid #2A3B5C", color: "#8A8FA3", fontFamily: DATA_FONT, fontSize: 11 }}
+          >
+            <LogOut size={13} /> SIGN OUT
+          </button>
         </div>
         <p style={{ fontFamily: DATA_FONT, fontSize: 12, color: "#8A8FA3", letterSpacing: 0.5 }} className="mb-8">
           A single stamped record of every vendor's standing — issued, renewed, and checked at the border of every contract.
