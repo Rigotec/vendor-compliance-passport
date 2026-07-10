@@ -13,6 +13,11 @@ import {
   LogOut,
   Lock,
   Mail,
+  Paperclip,
+  Pencil,
+  Bell,
+  Download,
+  FileText,
 } from "lucide-react";
 
 // ---- Design tokens -----------------------------------------------------
@@ -187,10 +192,22 @@ function Stamp({ doc, onRemove, angle }) {
           {status === "valid" ? "APPROVED" : status === "expiring" ? "RENEW" : "EXPIRED"}
         </div>
         <div style={{ fontSize: 8, letterSpacing: 0.5 }}>{sub}</div>
+        {doc.fileUrl && (
+          <a
+            href={doc.fileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 mt-1"
+            style={{ fontSize: 8, letterSpacing: 0.5, textDecoration: "underline" }}
+          >
+            <Paperclip size={9} /> VIEW FILE
+          </a>
+        )}
       </div>
       <button
         onClick={onRemove}
-        className="absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity rounded-full p-1"
+        className="no-print absolute -top-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity rounded-full p-1"
         style={{ backgroundColor: INK_DARK, transform: `rotate(${-angle}deg)` }}
         aria-label="Remove document"
       >
@@ -201,12 +218,14 @@ function Stamp({ doc, onRemove, angle }) {
 }
 
 // ---- Add Document Form ---------------------------------------------------
-function AddDocumentForm({ onAdd, onCancel }) {
+function AddDocumentForm({ vendorId, onAdd, onCancel }) {
   const [type, setType] = useState(DOC_TYPES[0]);
   const [customType, setCustomType] = useState("");
   const [issueDate, setIssueDate] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
+  const [file, setFile] = useState(null);
   const [error, setError] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   const finalType = type === "__custom" ? customType : type;
 
@@ -217,17 +236,38 @@ function AddDocumentForm({ onAdd, onCancel }) {
     if (new Date(expiryDate) <= new Date(issueDate)) {
       return "Expiry date must be after the issue date.";
     }
+    if (file && file.size > 8 * 1024 * 1024) {
+      return "File is too large — please keep it under 8MB.";
+    }
     return "";
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const err = validate();
     if (err) {
       setError(err);
       return;
     }
     setError("");
-    onAdd({ id: uid(), type: finalType.trim(), issueDate, expiryDate });
+
+    let fileUrl = null;
+    if (file) {
+      setUploading(true);
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const path = `${vendorId}/${Date.now()}_${safeName}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("compliance-documents")
+        .upload(path, file);
+      setUploading(false);
+      if (uploadErr) {
+        setError("File upload failed: " + uploadErr.message);
+        return;
+      }
+      const { data } = supabase.storage.from("compliance-documents").getPublicUrl(path);
+      fileUrl = data.publicUrl;
+    }
+
+    onAdd({ id: uid(), type: finalType.trim(), issueDate, expiryDate, fileUrl });
   }
 
   return (
@@ -281,6 +321,18 @@ function AddDocumentForm({ onAdd, onCancel }) {
             />
           </div>
         </div>
+        <div>
+          <label style={{ fontFamily: DATA_FONT, fontSize: 11, color: INK_TEXT }}>
+            ATTACH FILE (PDF OR PHOTO, OPTIONAL)
+          </label>
+          <input
+            type="file"
+            accept=".pdf,image/*"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            className="w-full mt-1 px-2 py-2 rounded"
+            style={{ border: `1px solid ${GOLD}`, backgroundColor: PAPER, fontFamily: DATA_FONT, fontSize: 12 }}
+          />
+        </div>
       </div>
 
       {error && (
@@ -292,10 +344,11 @@ function AddDocumentForm({ onAdd, onCancel }) {
       <div className="flex gap-2 mt-4">
         <button
           onClick={handleSubmit}
-          className="px-4 py-2 rounded font-semibold"
+          disabled={uploading}
+          className="px-4 py-2 rounded font-semibold disabled:opacity-50"
           style={{ backgroundColor: INK, color: PAPER, fontFamily: DATA_FONT, fontSize: 12, letterSpacing: 1 }}
         >
-          STAMP DOCUMENT
+          {uploading ? "UPLOADING…" : "STAMP DOCUMENT"}
         </button>
         <button
           onClick={onCancel}
@@ -348,8 +401,9 @@ function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel }) {
   );
 }
 
-function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDelete }) {
+function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onUpdate, onDelete }) {
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmDocId, setConfirmDocId] = useState(null);
   const status = vendorStatus(vendor);
@@ -362,16 +416,25 @@ function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDel
 
   return (
     <div className="max-w-5xl mx-auto">
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1 mb-4 text-sm"
-        style={{ color: GOLD_LIGHT, fontFamily: DATA_FONT }}
-      >
-        <ChevronLeft size={16} /> ALL VENDORS
-      </button>
+      <div className="no-print flex items-center justify-between mb-4">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1 text-sm"
+          style={{ color: GOLD_LIGHT, fontFamily: DATA_FONT }}
+        >
+          <ChevronLeft size={16} /> ALL VENDORS
+        </button>
+        <button
+          onClick={() => window.print()}
+          className="flex items-center gap-1 px-3 py-1.5 rounded text-sm"
+          style={{ border: `1px solid ${GOLD_LIGHT}`, color: GOLD_LIGHT, fontFamily: DATA_FONT, fontSize: 11 }}
+        >
+          <Download size={13} /> EXPORT THIS PASSPORT
+        </button>
+      </div>
 
       <div
-        className="rounded-xl overflow-hidden shadow-2xl grid grid-cols-1 md:grid-cols-2"
+        className="rounded-xl overflow-hidden shadow-2xl grid grid-cols-1 md:grid-cols-2 print-area"
         style={{ minHeight: 480 }}
       >
         {/* Left page: bio data */}
@@ -401,34 +464,59 @@ function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDel
             {vendor.category.toUpperCase()} · {countryMeta(vendor.country).label.toUpperCase()}
           </p>
 
-          <div className="mt-6 space-y-3" style={{ fontFamily: DATA_FONT, fontSize: 13, color: INK_TEXT }}>
-            <div>
-              <span style={{ color: "#8A8272" }}>CONTACT — </span>
-              {vendor.contact || "—"}
+          {editing ? (
+            <div className="mt-5">
+              <VendorForm
+                mode="edit"
+                initialValues={vendor}
+                onCancel={() => setEditing(false)}
+                onSubmit={(updates) => {
+                  onUpdate(vendor.id, updates);
+                  setEditing(false);
+                }}
+              />
             </div>
-            <div>
-              <span style={{ color: "#8A8272" }}>PASSPORT ISSUED — </span>
-              {vendor.memberSince}
-            </div>
-            <div>
-              <span style={{ color: "#8A8272" }}>RECORD ID — </span>
-              {vendor.id.toUpperCase()}
-            </div>
-          </div>
+          ) : (
+            <>
+              <div className="mt-6 space-y-3" style={{ fontFamily: DATA_FONT, fontSize: 13, color: INK_TEXT }}>
+                <div>
+                  <span style={{ color: "#8A8272" }}>CONTACT — </span>
+                  {vendor.contact || "—"}
+                </div>
+                <div>
+                  <span style={{ color: "#8A8272" }}>PASSPORT ISSUED — </span>
+                  {vendor.memberSince}
+                </div>
+                <div>
+                  <span style={{ color: "#8A8272" }}>RECORD ID — </span>
+                  {vendor.id.toUpperCase()}
+                </div>
+              </div>
 
-          <div
-            className="mt-8 inline-flex items-center gap-2 px-3 py-2 rounded-full"
-            style={{ border: `2px solid ${meta.color}`, color: meta.color }}
-          >
-            <BadgeCheck size={16} />
-            <span style={{ fontFamily: DATA_FONT, fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>
-              {meta.label.toUpperCase()}
-            </span>
-          </div>
+              <div className="flex items-center gap-3 mt-8">
+                <div
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-full"
+                  style={{ border: `2px solid ${meta.color}`, color: meta.color }}
+                >
+                  <BadgeCheck size={16} />
+                  <span style={{ fontFamily: DATA_FONT, fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>
+                    {meta.label.toUpperCase()}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setEditing(true)}
+                  className="no-print flex items-center gap-1 px-3 py-2 rounded-full"
+                  style={{ border: `1px solid ${GOLD}`, color: GOLD, fontFamily: DATA_FONT, fontSize: 12 }}
+                >
+                  <Pencil size={13} /> EDIT
+                </button>
+              </div>
+            </>
+          )}
 
           <button
             onClick={() => setConfirmDelete(true)}
-            className="absolute bottom-6 left-8 flex items-center gap-1 text-xs"
+            className="no-print absolute bottom-6 left-8 flex items-center gap-1 text-xs"
             style={{ color: STAMP_RED, fontFamily: DATA_FONT }}
           >
             <Trash2 size={13} /> REMOVE VENDOR PASSPORT
@@ -463,7 +551,7 @@ function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDel
             </span>
             <button
               onClick={() => setAdding((a) => !a)}
-              className="flex items-center gap-1 px-2 py-1 rounded"
+              className="no-print flex items-center gap-1 px-2 py-1 rounded"
               style={{ backgroundColor: INK, color: PAPER, fontFamily: DATA_FONT, fontSize: 11 }}
             >
               <Plus size={13} /> ADD
@@ -507,6 +595,7 @@ function PassportDetail({ vendor, onBack, onAddDocument, onRemoveDocument, onDel
 
           {adding && (
             <AddDocumentForm
+              vendorId={vendor.id}
               onCancel={() => setAdding(false)}
               onAdd={(doc) => {
                 onAddDocument(vendor.id, doc);
@@ -565,11 +654,11 @@ function VendorCover({ vendor, onOpen }) {
 }
 
 // ---- Register Vendor Form ---------------------------------------------
-function RegisterVendorForm({ onCreate, onCancel }) {
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState(CATEGORIES[0]);
-  const [country, setCountry] = useState(COUNTRIES[0].code);
-  const [contact, setContact] = useState("");
+function VendorForm({ initialValues, mode, onSubmit, onCancel }) {
+  const [name, setName] = useState(initialValues?.name || "");
+  const [category, setCategory] = useState(initialValues?.category || CATEGORIES[0]);
+  const [country, setCountry] = useState(initialValues?.country || COUNTRIES[0].code);
+  const [contact, setContact] = useState(initialValues?.contact || "");
   const [error, setError] = useState("");
 
   function validate() {
@@ -587,7 +676,7 @@ function RegisterVendorForm({ onCreate, onCancel }) {
       return;
     }
     setError("");
-    onCreate({
+    onSubmit({
       name: name.trim(),
       category,
       country,
@@ -601,7 +690,7 @@ function RegisterVendorForm({ onCreate, onCancel }) {
       style={{ backgroundColor: PAPER, border: `1px solid ${GOLD}` }}
     >
       <h3 style={{ fontFamily: DISPLAY_FONT, fontSize: 20, color: INK_TEXT }} className="mb-4">
-        Register a New Vendor Passport
+        {mode === "edit" ? "Edit Vendor Details" : "Register a New Vendor Passport"}
       </h3>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div>
@@ -664,7 +753,7 @@ function RegisterVendorForm({ onCreate, onCancel }) {
           className="px-5 py-2 rounded font-semibold"
           style={{ backgroundColor: INK, color: PAPER, fontFamily: DATA_FONT, fontSize: 12, letterSpacing: 1 }}
         >
-          ISSUE PASSPORT
+          {mode === "edit" ? "SAVE CHANGES" : "ISSUE PASSPORT"}
         </button>
         <button
           onClick={onCancel}
@@ -683,6 +772,7 @@ function LoginScreen({ onAuthed }) {
   const [mode, setMode] = useState("signin"); // signin | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -693,6 +783,10 @@ function LoginScreen({ onAuthed }) {
     setNotice("");
     if (!email.trim() || !password) {
       setError("Enter both email and password.");
+      return;
+    }
+    if (mode === "signup" && !companyName.trim()) {
+      setError("Enter your company name.");
       return;
     }
     setLoading(true);
@@ -711,6 +805,7 @@ function LoginScreen({ onAuthed }) {
       const { error: err } = await supabase.auth.signUp({
         email: email.trim(),
         password,
+        options: { data: { company_name: companyName.trim() } },
       });
       setLoading(false);
       if (err) {
@@ -742,6 +837,26 @@ function LoginScreen({ onAuthed }) {
         </h1>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === "signup" && (
+            <div>
+              <label style={{ fontFamily: DATA_FONT, fontSize: 11, color: "#6B6250" }}>COMPANY NAME</label>
+              <div className="flex items-center gap-2 mt-1 px-3 py-2 rounded" style={{ border: `1px solid ${GOLD}`, backgroundColor: "#fff" }}>
+                <Building2 size={14} color="#8A8272" />
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  className="w-full outline-none bg-transparent"
+                  style={{ fontFamily: DATA_FONT, fontSize: 13 }}
+                  placeholder="Kivu Freight & Logistics"
+                  autoComplete="organization"
+                />
+              </div>
+              <p style={{ fontFamily: DATA_FONT, fontSize: 10, color: "#8A8272" }} className="mt-1">
+                Your team's own private workspace — other companies won't see your data.
+              </p>
+            </div>
+          )}
           <div>
             <label style={{ fontFamily: DATA_FONT, fontSize: 11, color: "#6B6250" }}>EMAIL</label>
             <div className="flex items-center gap-2 mt-1 px-3 py-2 rounded" style={{ border: `1px solid ${GOLD}`, backgroundColor: "#fff" }}>
@@ -809,6 +924,8 @@ function LoginScreen({ onAuthed }) {
 // ---- Main App -------------------------------------------------------------
 export default function VendorCompliancePassport() {
   const [session, setSession] = useState(undefined); // undefined = checking, null = signed out
+  const [orgId, setOrgId] = useState(null);
+  const [orgReady, setOrgReady] = useState(false);
   const [vendors, setVendors] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
@@ -817,10 +934,49 @@ export default function VendorCompliancePassport() {
   const [countryFilter, setCountryFilter] = useState("all");
   const [showRegister, setShowRegister] = useState(false);
 
+  async function ensureProfile() {
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+    if (!user) return;
+
+    const { data: profile, error: profileErr } = await supabase
+      .from("profiles")
+      .select("org_id")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileErr) {
+      console.error("Failed to check profile:", profileErr);
+      setOrgReady(true);
+      return;
+    }
+
+    if (profile) {
+      setOrgId(profile.org_id);
+      setOrgReady(true);
+      return;
+    }
+
+    const companyName = user.user_metadata?.company_name || "My Company";
+    const { data: newOrgId, error: rpcErr } = await supabase.rpc(
+      "create_organization_for_user",
+      { org_name: companyName }
+    );
+
+    if (rpcErr) {
+      console.error("Failed to create organization:", rpcErr);
+      setOrgReady(true);
+      return;
+    }
+
+    setOrgId(newOrgId);
+    setOrgReady(true);
+  }
+
   async function loadVendors() {
     const { data, error } = await supabase
       .from("vendors")
-      .select("id, name, category, country, contact, member_since, documents(id, type, issue_date, expiry_date)")
+      .select("id, name, category, country, contact, member_since, documents(id, type, issue_date, expiry_date, file_url)")
       .order("created_at", { ascending: true });
 
     if (error) {
@@ -841,6 +997,7 @@ export default function VendorCompliancePassport() {
         type: d.type,
         issueDate: d.issue_date,
         expiryDate: d.expiry_date,
+        fileUrl: d.file_url,
       })),
     }));
     setVendors(mapped);
@@ -856,7 +1013,12 @@ export default function VendorCompliancePassport() {
   }, []);
 
   useEffect(() => {
-    if (session) loadVendors();
+    if (session) {
+      ensureProfile().then(() => loadVendors());
+    } else {
+      setOrgReady(false);
+      setOrgId(null);
+    }
   }, [session]);
 
   async function createVendor(vendor) {
@@ -867,6 +1029,7 @@ export default function VendorCompliancePassport() {
         category: vendor.category,
         country: vendor.country,
         contact: vendor.contact,
+        org_id: orgId,
       })
       .select()
       .single();
@@ -890,6 +1053,33 @@ export default function VendorCompliancePassport() {
     ]);
   }
 
+  async function updateVendor(id, updates) {
+    const { data, error } = await supabase
+      .from("vendors")
+      .update({
+        name: updates.name,
+        category: updates.category,
+        country: updates.country,
+        contact: updates.contact,
+      })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Failed to update vendor:", error);
+      return;
+    }
+
+    setVendors((vs) =>
+      vs.map((v) =>
+        v.id === id
+          ? { ...v, name: data.name, category: data.category, country: data.country, contact: data.contact }
+          : v
+      )
+    );
+  }
+
   async function addDocument(vendorId, doc) {
     const { data, error } = await supabase
       .from("documents")
@@ -898,6 +1088,7 @@ export default function VendorCompliancePassport() {
         type: doc.type,
         issue_date: doc.issueDate,
         expiry_date: doc.expiryDate,
+        file_url: doc.fileUrl || null,
       })
       .select()
       .single();
@@ -914,7 +1105,7 @@ export default function VendorCompliancePassport() {
               ...v,
               documents: [
                 ...v.documents,
-                { id: data.id, type: data.type, issueDate: data.issue_date, expiryDate: data.expiry_date },
+                { id: data.id, type: data.type, issueDate: data.issue_date, expiryDate: data.expiry_date, fileUrl: data.file_url },
               ],
             }
           : v
@@ -958,6 +1149,19 @@ export default function VendorCompliancePassport() {
     return c;
   }, [vendors]);
 
+  const urgentDocs = useMemo(() => {
+    const list = [];
+    vendors.forEach((v) => {
+      v.documents.forEach((d) => {
+        const days = daysUntil(d.expiryDate);
+        if (days <= 30) list.push({ vendorName: v.name, vendorId: v.id, ...d, daysLeft: days });
+      });
+    });
+    return list.sort((a, b) => a.daysLeft - b.daysLeft);
+  }, [vendors]);
+
+  const [showReminders, setShowReminders] = useState(true);
+
   if (session === undefined) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: INK_DARK }}>
@@ -972,7 +1176,7 @@ export default function VendorCompliancePassport() {
     return <LoginScreen onAuthed={() => {}} />;
   }
 
-  if (!loaded) {
+  if (!loaded || !orgReady) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: INK_DARK }}>
         <span style={{ color: GOLD_LIGHT, fontFamily: DATA_FONT, fontSize: 13, letterSpacing: 2 }}>
@@ -984,7 +1188,19 @@ export default function VendorCompliancePassport() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: INK_DARK }}>
-      <div className="max-w-6xl mx-auto px-5 py-8">
+      <style>{`
+        @media print {
+          body { background: #fff !important; }
+          .no-print { display: none !important; }
+          .print-area, .print-area * {
+            background: #fff !important;
+            color: #111 !important;
+            border-color: #999 !important;
+            box-shadow: none !important;
+          }
+        }
+      `}</style>
+      <div className="max-w-6xl mx-auto px-5 py-8 print-area">
         {/* Header */}
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-3">
@@ -993,13 +1209,22 @@ export default function VendorCompliancePassport() {
               CompliSure
             </h1>
           </div>
-          <button
-            onClick={() => supabase.auth.signOut()}
-            className="flex items-center gap-1 px-3 py-1.5 rounded"
-            style={{ border: "1px solid #2A3B5C", color: "#8A8FA3", fontFamily: DATA_FONT, fontSize: 11 }}
-          >
-            <LogOut size={13} /> SIGN OUT
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => window.print()}
+              className="no-print flex items-center gap-1 px-3 py-1.5 rounded"
+              style={{ border: `1px solid ${GOLD}`, color: GOLD, fontFamily: DATA_FONT, fontSize: 11 }}
+            >
+              <Download size={13} /> EXPORT REPORT
+            </button>
+            <button
+              onClick={() => supabase.auth.signOut()}
+              className="no-print flex items-center gap-1 px-3 py-1.5 rounded"
+              style={{ border: "1px solid #2A3B5C", color: "#8A8FA3", fontFamily: DATA_FONT, fontSize: 11 }}
+            >
+              <LogOut size={13} /> SIGN OUT
+            </button>
+          </div>
         </div>
         <p style={{ fontFamily: DATA_FONT, fontSize: 12, color: "#8A8FA3", letterSpacing: 0.5 }} className="mb-8">
           A single stamped record of every vendor's standing — issued, renewed, and checked at the border of every contract.
@@ -1007,6 +1232,48 @@ export default function VendorCompliancePassport() {
 
         {!selected && (
           <>
+            {urgentDocs.length > 0 && showReminders && (
+              <div
+                className="rounded-lg p-4 mb-6"
+                style={{ backgroundColor: "#3A2A16", border: `1px solid ${STAMP_AMBER}` }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2">
+                    <Bell size={16} color={STAMP_AMBER} className="mt-0.5 shrink-0" />
+                    <div>
+                      <p style={{ fontFamily: DATA_FONT, fontSize: 12, fontWeight: 700, color: STAMP_AMBER, letterSpacing: 0.5 }}>
+                        {urgentDocs.length} document{urgentDocs.length === 1 ? "" : "s"} need attention
+                      </p>
+                      <ul className="mt-2 space-y-1">
+                        {urgentDocs.slice(0, 5).map((d) => (
+                          <li key={d.id} style={{ fontFamily: DATA_FONT, fontSize: 11, color: "#D8BD84" }}>
+                            <button onClick={() => setSelectedId(d.vendorId)} className="underline">
+                              {d.vendorName}
+                            </button>
+                            {" — "}{d.type}{" — "}
+                            {d.daysLeft < 0 ? `expired ${Math.abs(d.daysLeft)}d ago` : `expires in ${d.daysLeft}d`}
+                          </li>
+                        ))}
+                        {urgentDocs.length > 5 && (
+                          <li style={{ fontFamily: DATA_FONT, fontSize: 11, color: "#8A8272" }}>
+                            +{urgentDocs.length - 5} more
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowReminders(false)}
+                    className="no-print"
+                    style={{ color: "#D8BD84" }}
+                    aria-label="Dismiss"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Stat bar */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
               {[
@@ -1049,7 +1316,7 @@ export default function VendorCompliancePassport() {
             </div>
 
             {/* Toolbar */}
-            <div className="flex flex-col sm:flex-row gap-3 mb-6">
+            <div className="no-print flex flex-col sm:flex-row gap-3 mb-6">
               <div
                 className="flex items-center gap-2 px-3 py-2 rounded-lg flex-1"
                 style={{ backgroundColor: INK, border: "1px solid #2A3B5C" }}
@@ -1072,7 +1339,7 @@ export default function VendorCompliancePassport() {
               </button>
             </div>
 
-            <div className="flex items-center gap-2 mb-6">
+            <div className="no-print flex items-center gap-2 mb-6">
               <span style={{ fontFamily: DATA_FONT, fontSize: 11, color: "#8A8FA3", letterSpacing: 0.5 }}>
                 MARKET:
               </span>
@@ -1104,9 +1371,10 @@ export default function VendorCompliancePassport() {
             </div>
 
             {showRegister && (
-              <RegisterVendorForm
+              <VendorForm
+                mode="create"
                 onCancel={() => setShowRegister(false)}
-                onCreate={(v) => {
+                onSubmit={(v) => {
                   createVendor(v);
                   setShowRegister(false);
                 }}
@@ -1138,6 +1406,7 @@ export default function VendorCompliancePassport() {
             onBack={() => setSelectedId(null)}
             onAddDocument={addDocument}
             onRemoveDocument={removeDocument}
+            onUpdate={updateVendor}
             onDelete={deleteVendor}
           />
         )}
